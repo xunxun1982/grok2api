@@ -32,19 +32,35 @@ async def run_batch(
     if not item_list:
         return []
 
-    semaphore = asyncio.Semaphore(max(1, concurrency))
+    worker_count = max(1, concurrency)
 
-    async def _guarded(item: T) -> R:
-        async with semaphore:
-            return await handler(item)
+    async def _run_chunk(chunk: list[T]) -> list[Any]:
+        queue: asyncio.Queue[tuple[int, T] | None] = asyncio.Queue()
+        results: list[Any] = [None] * len(chunk)
+
+        for index, item in enumerate(chunk):
+            queue.put_nowait((index, item))
+        for _ in range(min(worker_count, len(chunk))):
+            queue.put_nowait(None)
+
+        async def _worker() -> None:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+                index, value = item
+                results[index] = await handler(value)
+
+        await asyncio.gather(*[_worker() for _ in range(min(worker_count, len(chunk)))])
+        return results
 
     if not batch_size or batch_size >= len(item_list):
-        return list(await asyncio.gather(*[_guarded(i) for i in item_list]))
+        return list(await _run_chunk(item_list))
 
     results: list[Any] = []
     for start in range(0, len(item_list), batch_size):
         chunk = item_list[start : start + batch_size]
-        chunk_results = await asyncio.gather(*[_guarded(i) for i in chunk])
+        chunk_results = await _run_chunk(chunk)
         results.extend(chunk_results)
         if pause_sec > 0 and start + batch_size < len(item_list):
             await asyncio.sleep(pause_sec)
