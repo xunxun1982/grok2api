@@ -313,6 +313,31 @@ async def delete_tokens(
     return _json({"deleted": len(cleaned)})
 
 
+@router.delete("/tokens/invalid")
+async def delete_invalid_tokens(repo: "AccountRepository" = Depends(get_repo)):
+    tokens: list[str] = []
+    page_num = 1
+    while True:
+        query = ListAccountsQuery(page=page_num, page_size=2000)
+        query.exclude_statuses.extend([
+            AccountStatus.ACTIVE,
+            AccountStatus.COOLING,
+            AccountStatus.DISABLED,
+        ])
+        page = await repo.list_accounts(query)
+        tokens.extend(r.token for r in page.items)
+        if page_num >= page.total_pages or not page.items:
+            break
+        page_num += 1
+
+    if not tokens:
+        return _json({"deleted": 0})
+
+    await repo.delete_accounts(tokens)
+    logger.info("admin invalid tokens deleted: deleted_count={}", len(tokens))
+    return _json({"deleted": len(tokens)})
+
+
 @router.put("/tokens/edit")
 async def edit_token(
     req: EditTokenRequest,

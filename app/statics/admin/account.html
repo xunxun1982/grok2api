@@ -930,6 +930,19 @@
       <button type="button" onclick="doExport()" id="btn-export" class="toolbar-icon-btn">
         <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
       </button>
+      <button type="button" onclick="batchNSFWAll()" id="btn-nsfw-all" class="row-nsfw-btn">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.25"/>
+          <text x="10" y="10.4">18</text>
+          <path d="M4.5 10h11"/>
+        </svg>
+      </button>
+      <button type="button" onclick="batchRefreshAllManageable()" id="btn-refresh-all" class="toolbar-icon-btn">
+        <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M20 11a8 8 0 0 0-14.6-4.6"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.6"/><path d="M20 20v-5h-5"/><path d="M12 8v4l3 2"/></svg>
+      </button>
+      <button type="button" onclick="deleteAllInvalid()" id="btn-delete-invalid-all" class="toolbar-icon-btn toolbar-icon-btn-danger">
+        <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M5 7h14"/><path d="M9 7V4h6v3"/><path d="M8 10v7"/><path d="M12 10v7"/><path d="M16 10v7"/><path d="M7 7l1 13h8l1-13"/><path d="M12 2v2"/></svg>
+      </button>
       <button type="button" onclick="batchNSFW()" id="btn-nsfw" class="row-nsfw-btn" style="display:none">
         <svg viewBox="0 0 20 20" aria-hidden="true">
           <circle cx="10" cy="10" r="7.25"/>
@@ -947,6 +960,9 @@
       </button>
       <button type="button" onclick="batchDeleteSel()" id="btn-delete" class="toolbar-icon-btn toolbar-icon-btn-danger" style="display:none">
         <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M5 7h14"/><path d="M9 7V4h6v3"/><path d="M8 10v7"/><path d="M12 10v7"/><path d="M16 10v7"/><path d="M7 7l1 13h8l1-13"/></svg>
+      </button>
+      <button type="button" onclick="batchDeleteInvalidSel()" id="btn-delete-invalid" class="toolbar-icon-btn toolbar-icon-btn-danger" style="display:none">
+        <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M5 7h14"/><path d="M9 7V4h6v3"/><path d="M8 10v7"/><path d="M12 10v7"/><path d="M16 10v7"/><path d="M7 7l1 13h8l1-13"/><path d="M12 2v2"/></svg>
       </button>
       <button type="button" onclick="cancelBatch()" id="btn-batch-cancel" class="toolbar-icon-btn toolbar-icon-btn-danger" style="display:none">
         <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M6 6 18 18"/><path d="M18 6 6 18"/></svg>
@@ -1116,11 +1132,15 @@ function applyAccountI18n() {
   const toolbarTips = [
     ['btn-filter', 'account.filter', '筛选'],
     ['btn-export', 'account.export', '导出数据'],
+    ['btn-nsfw-all', 'account.batchNsfwAll', '全部开启 NSFW'],
+    ['btn-refresh-all', 'account.refreshAllManageable', '重新测试全部正常账户'],
+    ['btn-delete-invalid-all', 'account.deleteInvalidAll', '删除全部异常'],
     ['btn-nsfw', 'account.batchNsfw', '开启 NSFW'],
     ['btn-refresh', 'account.batchRefresh', '刷新选中'],
     ['btn-disable', 'account.batchDisable', '禁用选中'],
     ['btn-restore', 'account.batchRestore', '恢复选中'],
     ['btn-delete', 'account.batchDelete', '删除选中'],
+    ['btn-delete-invalid', 'account.deleteInvalidSelected', '删除选中异常'],
     ['btn-batch-cancel', 'account.cancel', '取消'],
   ];
   toolbarTips.forEach(([id, key, fallback]) => {
@@ -1522,7 +1542,7 @@ function toggleRow(el) {
 }
 function updateBatchBtns() {
   const show = sel.size > 0;
-  ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete'].forEach(id =>
+  ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete','btn-delete-invalid'].forEach(id =>
     document.getElementById(id).style.display = show ? '' : 'none');
 }
 
@@ -1753,13 +1773,64 @@ function doDelete(tokens) {
 }
 function batchDeleteSel() { if (sel.size) doDelete([...sel]); }
 
+function selectedInvalidTokens() {
+  return pageTokens
+    .filter(t => sel.has(t.token) && isInvalidStatus(t.status))
+    .map(t => t.token);
+}
+
+function batchDeleteInvalidSel() {
+  const tokens = selectedInvalidTokens();
+  if (!tokens.length) return showToast(tr('account.noInvalidSelected', null, '选中项中没有异常账户'), 'error');
+  doDelete(tokens);
+}
+
+async function fetchInvalidTotal() {
+  const data = await _api('GET', '/tokens?page=1&page_size=1&exclude_statuses=active,cooling,disabled');
+  return data.total || 0;
+}
+
+async function deleteAllInvalid() {
+  try {
+    const total = await fetchInvalidTotal();
+    if (!total) return showToast(tr('account.noInvalidAccounts', null, '没有可删除的异常账户'), 'error');
+    openConfirm(
+      tr('account.deleteInvalidAllTitle', null, '删除全部异常账户'),
+      tr('account.deleteInvalidAllBody', { n: total }, `确认删除全部 <b>${total}</b> 个异常账户？<br><small style="color:var(--error)">此操作不可撤销。确认后还需要输入 DELETE。</small>`),
+      async () => {
+        const typed = window.prompt(tr('account.deleteInvalidTypeConfirm', null, '输入 DELETE 确认删除全部异常账户'));
+        if (typed !== 'DELETE') return showToast(tr('account.cancelled', null, '已取消'), 'error');
+        try {
+          showToast(tr('account.deleting', { n: total }, `正在删除 ${total} 个账户…`), 'info');
+          const d = await _api('DELETE', '/tokens/invalid');
+          showToast(tr('account.deleteDone', { n: d.deleted || 0 }, `已删除 ${d.deleted || 0} 个`), 'success');
+          sel.clear();
+          await load();
+        } catch (e) {
+          showToast(`${tr('account.deleteFailed', null, '删除失败')}: ${e.message}`, 'error');
+        }
+      }
+    );
+  } catch (e) {
+    showToast(`${tr('account.operationFailed', null, '操作失败')}: ${e.message}`, 'error');
+  }
+}
+
 // ── Batch SSE runner ───────────────────────────────────────────────────────
 let _batchTaskId = null;
 let _batchEs     = null;
+let _batchStarting = false;
 
 async function _runBatch(endpoint, tokens, label, onDone) {
+  if (_batchStarting || _batchEs) {
+    showToast(tr('account.batchRunning', null, '已有批量任务正在运行'), 'error');
+    return;
+  }
+  _batchStarting = true;
   const btnCancel = document.getElementById('btn-batch-cancel');
-  ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete'].forEach(id =>
+  const globalActionIds = ['btn-nsfw-all','btn-refresh-all','btn-delete-invalid-all'];
+  globalActionIds.forEach(id => document.getElementById(id).style.display = 'none');
+  ['btn-nsfw','btn-refresh','btn-disable','btn-restore','btn-delete','btn-delete-invalid'].forEach(id =>
     document.getElementById(id).style.display = 'none');
   btnCancel.style.display = '';
 
@@ -1767,23 +1838,27 @@ async function _runBatch(endpoint, tokens, label, onDone) {
   let _finalReceived = false;
 
   function _cleanup() {
+    _batchStarting = false;
+    globalActionIds.forEach(id => document.getElementById(id).style.display = '');
     btnCancel.style.display = 'none';
     updateBatchBtns();
   }
   function _done(es) {
     _finalReceived = true;
-    es.close(); _batchEs = null;
+    es.close(); _batchEs = null; _batchTaskId = null;
     _cleanup();
   }
 
   try {
-    const d = await _api('POST', `${endpoint}?async=true`, { tokens });
+    const join = endpoint.includes('?') ? '&' : '?';
+    const d = await _api('POST', `${endpoint}${join}async=true`, { tokens });
     _batchTaskId = d.task_id;
     const total = d.total || tokens.length;
 
     const key = await adminKey.get();
     const es = new EventSource(`${ADMIN_API}/batch/${_batchTaskId}/stream?app_key=${encodeURIComponent(key)}`);
     _batchEs = es;
+    _batchStarting = false;
 
     es.onmessage = async (e) => {
       const ev = JSON.parse(e.data);
@@ -1810,6 +1885,7 @@ async function _runBatch(endpoint, tokens, label, onDone) {
       // readyState CLOSED (2) = server rejected reconnect (e.g. 401/404), give up
       if (this.readyState === EventSource.CLOSED) {
         _batchEs = null;
+        _batchTaskId = null;
         _cleanup();
         progress.finish('连接中断', 'error');
       }
@@ -1925,6 +2001,19 @@ async function batchRefreshSel() {
   );
 }
 
+function batchRefreshAllManageable() {
+  const n = manageableTokenCount();
+  if (!n) return showToast(tr('account.noManageableAccounts', null, '没有可操作的可用账户'), 'error');
+  openConfirm(
+    tr('account.refreshAllConfirmTitle', null, '重新测试全部正常账户'),
+    tr('account.refreshAllConfirmBody', { n }, `重新测试全部 <b>${n}</b> 个正常/冷却账户的运行状态？<br><small style="color:var(--fg-muted)">该操作会调用上游接口，并按后端并发上限 50 分批执行。</small>`),
+    async () => _runBatch('/batch/refresh?all_manageable=true', [],
+      tr('account.refreshAllRunning', { n }, `正在重新测试 ${n} 个账户…`),
+      (ok, fail) => showToast(tr('account.refreshDone', { ok, fail }, `刷新完成：成功 ${ok}，失败 ${fail}`), fail > 0 ? 'error' : 'success')
+    )
+  );
+}
+
 // ── NSFW ───────────────────────────────────────────────────────────────────
 async function nsfwOne(token, enabled = true) {
   try {
@@ -1949,6 +2038,24 @@ function batchNSFW() {
     async () => _runBatch('/batch/nsfw', tokens,
       tr('account.nsfwEnabling', { n: tokens.length }, `正在为 ${tokens.length} 个账户开启 NSFW…`),
       (ok, fail) => showToast(tr('account.nsfwDone', { ok, fail }, `NSFW 完成：成功 ${ok}，失败 ${fail}`), 'success')
+    )
+  );
+}
+
+function manageableTokenCount() {
+  const s = (globalStats && globalStats.stats) || {};
+  return (s.active || 0) + (s.cooling || 0);
+}
+
+function batchNSFWAll() {
+  const n = manageableTokenCount();
+  if (!n) return showToast(tr('account.noManageableAccounts', null, '没有可操作的可用账户'), 'error');
+  openConfirm(
+    tr('account.nsfwAllConfirmTitle', null, '全部开启 NSFW'),
+    tr('account.nsfwAllConfirmBody', { n }, `为全部 <b>${n}</b> 个可用账户开启 NSFW？<br><small style="color:var(--fg-muted)">该操作会按后端并发上限分批执行。</small>`),
+    async () => _runBatch('/batch/nsfw?all_manageable=true', [],
+      tr('account.nsfwAllEnabling', { n }, `正在为 ${n} 个可用账户开启 NSFW…`),
+      (ok, fail) => showToast(tr('account.nsfwDone', { ok, fail }, `NSFW 完成：成功 ${ok}，失败 ${fail}`), fail > 0 ? 'error' : 'success')
     )
   );
 }
